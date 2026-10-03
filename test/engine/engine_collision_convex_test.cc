@@ -502,5 +502,53 @@ TEST_F(MjcConvexTest, IsEnclosedSite) {
               1e-5);
 }
 
+TEST_F(MjcConvexTest, CylinderMeshEmptyClipPreservesWitnessOrder) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <option gravity="0 0 0" ccd_iterations="35" ccd_tolerance="1e-10"/>
+    <asset>
+      <mesh name="boxmesh" vertex="
+        -0.01 -0.006 -0.016  -0.01 -0.006 0.016
+         0.01 -0.006 -0.016   0.01 -0.006 0.016
+        -0.01  0.006 -0.016  -0.01  0.006 0.016
+         0.01  0.006 -0.016   0.01  0.006 0.016"/>
+    </asset>
+    <worldbody>
+      <body pos="0.024577426145516321 0.006234455761096676 -0.019520157306947224"
+            quat="0.42074265903345109 0.33170008635912662 -0.61665398614268951 -0.5767915819021121">
+        <freejoint/>
+        <geom name="mesh" type="mesh" mesh="boxmesh" mass="0.05"/>
+      </body>
+      <body>
+        <freejoint/>
+        <geom name="cylinder" type="cylinder" size="0.02 0.016" mass="0.05"/>
+      </body>
+    </worldbody>
+  </mujoco>)";
+  MjModelPtr model = LoadModelFromString(xml);
+  ASSERT_THAT(model, NotNull());
+  MjDataPtr data = MakeData(model);
+  int cylinder = mj_name2id(model.get(), mjOBJ_GEOM, "cylinder");
+
+  // The single-contact EPA witnesses point out of the cylinder's lower cap.
+  model->opt.disableflags |= mjDSBL_MULTICCD;
+  mj_forward(model.get(), data.get());
+  ASSERT_EQ(data->ncon, 1);
+  mjContact single = data->contact[0];
+  ASSERT_EQ(single.geom1, cylinder);
+  EXPECT_LT(single.dist, 0);
+  EXPECT_LT(single.frame[2], -0.99);
+
+  // Empty clipping must retain the original witnesses, including their order.
+  model->opt.disableflags &= ~mjDSBL_MULTICCD;
+  mj_forward(model.get(), data.get());
+  ASSERT_EQ(data->ncon, 1);
+  const mjContact& multi = data->contact[0];
+  ASSERT_EQ(multi.geom1, cylinder);
+  EXPECT_LT(multi.frame[2], -0.99);
+  EXPECT_GT(mju_dot3(multi.frame, single.frame), 0.99);
+  EXPECT_NEAR(multi.dist, single.dist, MjTol(1e-12, 1e-6));
+}
+
 }  // namespace
 }  // namespace mujoco
